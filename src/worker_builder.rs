@@ -1,7 +1,7 @@
 use std::{borrow::Cow, marker::PhantomData};
 
 use bevy::{
-    prelude::{AssetServer, World},
+    prelude::{AssetServer, World, Image, Handle},
     render::{
         render_resource::{
             encase::{private::WriteInto, StorageBuffer, UniformBuffer},
@@ -26,6 +26,7 @@ pub struct AppComputeWorkerBuilder<'a, W: ComputeWorker> {
     pub(crate) cached_pipeline_ids: HashMap<Uuid, CachedAppComputePipelineId>,
     pub(crate) buffers: HashMap<String, Buffer>,
     pub(crate) staging_buffers: HashMap<String, StagingBuffer>,
+    pub(crate) images: HashMap<String, Handle<Image>>,
     pub(crate) steps: Vec<Step>,
     pub(crate) run_mode: RunMode,
     _phantom: PhantomData<W>,
@@ -41,6 +42,7 @@ impl<'a, W: ComputeWorker> AppComputeWorkerBuilder<'a, W> {
             cached_pipeline_ids: HashMap::default(),
             buffers: HashMap::default(),
             staging_buffers: HashMap::default(),
+            images: HashMap::default(),
             steps: vec![],
             run_mode: RunMode::Continuous,
             _phantom: PhantomData::default(),
@@ -128,6 +130,19 @@ impl<'a, W: ComputeWorker> AppComputeWorkerBuilder<'a, W> {
 
         self.staging_buffers.insert(name.to_owned(), staging);
 
+        self
+    }
+
+    /// Add an image storage texture buffer to the worker.
+    pub fn add_image(
+        &mut self,
+        name: &str,
+        image: &Handle<Image>
+    ) -> &mut Self {
+        self.images.insert(
+            name.to_owned(),
+            image.clone()
+        );
         self
     }
 

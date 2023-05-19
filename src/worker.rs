@@ -2,10 +2,10 @@ use core::panic;
 use std::{marker::PhantomData, ops::Deref};
 
 use bevy::{
-    prelude::{Res, ResMut, Resource},
+    prelude::{Res, ResMut, Resource, Image, Handle},
     render::{
         render_resource::{Buffer, ComputePipeline},
-        renderer::{RenderDevice, RenderQueue},
+        renderer::{RenderDevice, RenderQueue}, render_asset::RenderAssets, texture::GpuImage,
     },
     utils::{HashMap, Uuid},
 };
@@ -69,6 +69,8 @@ pub struct AppComputeWorker<W: ComputeWorker> {
     pipelines: HashMap<Uuid, Option<ComputePipeline>>,
     buffers: HashMap<String, Buffer>,
     staging_buffers: HashMap<String, StagingBuffer>,
+    image_handles: HashMap<String, Handle<Image>>,
+    gpu_images: HashMap<String, Option<GpuImage>>,
     steps: Vec<Step>,
     command_encoder: Option<CommandEncoder>,
     run_mode: RunMode,
@@ -90,6 +92,11 @@ impl<W: ComputeWorker> From<&AppComputeWorkerBuilder<'_, W>> for AppComputeWorke
         let command_encoder =
             Some(render_device.create_command_encoder(&CommandEncoderDescriptor { label: None }));
 
+        let mut gpu_images = HashMap::default();
+        for (&ref k, _) in builder.images.iter() {
+            gpu_images.insert(k.to_string(), None);
+        }
+
         Self {
             state: WorkerState::Created,
             render_device,
@@ -98,6 +105,8 @@ impl<W: ComputeWorker> From<&AppComputeWorkerBuilder<'_, W>> for AppComputeWorke
             pipelines,
             buffers: builder.buffers.clone(),
             staging_buffers: builder.staging_buffers.clone(),
+            image_handles: builder.images.clone(),
+            gpu_images,
             steps: builder.steps.clone(),
             command_encoder,
             run_mode: builder.run_mode,
@@ -116,17 +125,35 @@ impl<W: ComputeWorker> AppComputeWorker<W> {
 
         let mut entries = vec![];
         for (index, var) in compute_pass.vars.iter().enumerate() {
-            let Some(buffer) = self
-                    .buffers
-                    .get(var)
-                    else { return Err(Error::BufferNotFound(var.to_owned())) };
+            // First try to get from regular buffers
+            if let Some(buffer) = self.buffers.get(var) {
+                let entry = BindGroupEntry {
+                    binding: index as u32,
+                    resource: buffer.as_entire_binding(),
+                };
 
-            let entry = BindGroupEntry {
-                binding: index as u32,
-                resource: buffer.as_entire_binding(),
-            };
+                entries.push(entry);
+            }
+            // Otherwise try to get from images
+            else if let Some(maybe_image) = self.gpu_images.get(var) {
 
-            entries.push(entry);
+                if let Some(image) = maybe_image {
+                    let entry = BindGroupEntry {
+                        binding: index as u32,
+                        resource: wgpu::BindingResource::TextureView(&image.texture_view)
+                    };
+
+                    entries.push(entry);
+                } else {
+                    // TODO JSR: Add new error for this if it works out
+                    // Something like GpuImageNotReady
+                    return Err(Error::PipelineNotReady);
+                }
+
+            } else {
+                return Err(Error::BufferNotFound(var.to_owned()));
+            }
+
         }
 
         let Some(maybe_pipeline) = self
@@ -415,5 +442,18 @@ impl<W: ComputeWorker> AppComputeWorker<W> {
                 pipeline_cache.get_compute_pipeline(cached_id).cloned(),
             );
         }
+    }
+
+    pub(crate) fn extract_image_textures(
+        mut worker: ResMut<Self>,
+        gpu_images: Res<RenderAssets<Image>>,
+    ) {
+        let image_handles = worker.image_handles.clone();
+        let gpu_image_map = &mut worker.gpu_images;
+        image_handles.iter().for_each(|(&ref val, &ref handle)| {
+            if let Some(gpu_image) = gpu_images.get(handle) {
+                gpu_image_map.insert(val.to_string(), Some(gpu_image.clone()));
+            }
+        });
     }
 }

@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use bevy::{prelude::*, render::renderer::RenderDevice};
+use bevy::{prelude::*, render::{renderer::RenderDevice, RenderApp, RenderSet}};
 
 use crate::{
     extract_shaders, pipeline_cache::AppPipelineCache, process_pipeline_queue_system,
@@ -44,5 +44,10 @@ impl<W: ComputeWorker> Plugin for AppComputeWorkerPlugin<W> {
                     .chain()
                     .in_base_set(CoreSet::PostUpdate),
             );
+
+        // TODO JSR: Potentially query RenderAssets from render world
+        let render_app = app.sub_app_mut(RenderApp);
+        render_app
+            .add_system(AppComputeWorker::<W>::extract_image_textures.in_set(RenderSet::Render));
     }
 }
